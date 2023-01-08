@@ -1,0 +1,830 @@
+---
+title: "Time Series and stock index analysis"
+author: "Federico Guzzo, Tania Pia Aloe"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+**Lo scopo di questo progetto è quello di analizzare diversi algoritmi
+per le previsioni finanziarie di alcune azioni molto famose. Questa
+analisi è stata condotta da due aspiranti Data Scientist, pertanto non
+costituisce e non è da considerarsi una consulenza finanziaria.**
+
+**Esistono molti modelli statistici per i mercati finanziari. Il
+comportamento di questi modelli è simile a quello dei modelli dei
+fenomeni naturali. Cioè, entrambi sono influenzati da variabili
+sconosciute e instabili. Ciò comporta un'elevata e imprevedibile
+volatilità. È quindi quasi impossibile prevedere il comportamento
+futuro.**
+
+\*\* Per l'analisi delle serie storiche abbiamo consultato questo PDF
+del Prof. Vito Ricci: --\>
+<https://cran.r-project.org/doc/contrib/Ricci-ts-italian.pdf> \*\*
+
+**Per il trattamento delle classi (ts, xts, zoo) abbiamo consultato
+questo PDF di Rotman School University of Toronto --\>
+<https://tdmdal.github.io/r-tutorial-202021-winter/r_timeseries_finance_pkgs.pdf>**
+
+**Librerie usate:**
+
+```{r librerie, message=FALSE, warning=FALSE, paged.print=FALSE}
+require(xts)
+require(doParallel)
+require(caret)
+require(dynlm)
+library(zoo)
+library(nnet)
+library(MASS)
+library(Rsolnp)
+library(nlme)
+library(TTR)
+library(depmixS4)
+library(ggplot2)
+library(reshape2)
+library(PerformanceAnalytics)
+library(quantmod)
+library(forecast)
+library(highcharter)
+library(tseries)
+library(timeSeries)
+library(TSstudio)
+library(dplyr)
+library(ggthemes)
+require(kableExtra)
+library(dynlm)
+library(tidyr)
+library(TSA)
+library(gridExtra)
+library(corrplot)
+library(plotly)
+library(GGally)
+library(data.table)
+library(lubridate)
+library(DT)
+library(e1071)
+library(doParallel)
+library(knitr)
+library(ggdark)
+library(ggplot2)
+library(depmixS4)
+# library(tensorflow)
+# library(keras)
+# options(kableExtra.latex.load_packages = FALSE)
+# ##### NOTA BENE (SE HAI UN MAC CON CPU SILICON GLI ULTIMI AGIONAMENTI DI TENSOR E KERAS NON FUNZIONANO)--> Ho dovuto eseguire il downgrade di tensorflow-macos alla versione 2.9.0 e tensorflow-metal alla 0.5.0 per eliminare tali errori. Altri su questo sito hanno segnalato problemi simili con versioni più recenti. Apple deve ancora fornire versioni funzionanti per le nuove versioni di TF.
+# #https://developer.apple.com/forums/thread/722361
+```
+
+**Utilizziamo la libreria "quantmod" per scaricare gli indici azionari
+interessati**
+
+```{r}
+price_apple <- getSymbols("AAPL", auto.assign=FALSE, from="2018-01-01", to="2022-12-31")
+price_google <- getSymbols("GOOGL",auto.assign=FALSE,from="2018-01-01",to="2022-12-31")
+price_amazon <- getSymbols("AMZN",auto.assign=FALSE,from="2018-01-01",to="2022-12-31")
+price_tesla <- getSymbols("TSLA",auto.assign=FALSE,from="2018-01-01",to="2022-12-31")
+```
+
+**Con la libreria "highcharter" visualizziamo gli indici azionari
+interessati:**
+
+```{r}
+highchart(type="stock") %>% 
+  hc_add_series(Cl(price_apple), name="AAPL") %>% 
+  hc_add_series(Cl(price_google), name="GOOGL") %>% 
+  hc_add_series(Cl(price_amazon), name="AMZN") %>% 
+  hc_add_series(Cl(price_tesla), name="TSLA") %>% 
+  hc_title(text="<b>AAPL vs GOOGL vs AMZN Closing Price</b>")
+
+```
+
+**Da questo primo grafico vediamo che il prezzo più alto c'è l'ha
+Apple**
+
+**Calcoliamo i rendimenti azionari**
+
+```{r}
+return_apple <- dailyReturn(Cl(price_apple))
+return_google <- dailyReturn(Cl(price_google))
+return_amazon <- dailyReturn(Cl(price_amazon))
+return_tesla <- dailyReturn(Cl(price_tesla))
+
+```
+
+**Creiamo una nuova variabile (returns) che conterrà tutti i rendimenti
+azionari**
+
+```{r}
+returns <- data.frame(return_apple,return_google,return_amazon,return_tesla)
+names(returns) <- c("return_apple","return_google","return_amazon","return_tesla")
+returns <- as.xts(returns)
+
+```
+
+```{r}
+charts.PerformanceSummary(returns,main="Rendimenti giornalieri Apple vs Google vs Amazon vs Tesla 2018-2022")
+```
+
+***TSLA presenta un un trend Ribassista nei mesi di Aprile e di
+settembre 2022 e APPL presenta un andamento rialzista a medio lungo
+termine, tuttavia si sono rivelati avere il più alto rendimento
+cumulativo rispetto a gli altri. Nella parte di drawdown possiamo vedere
+che ad oggi APPL è posizionata al disopra di tutte le altre. Questo
+significa che ha avuto un calo solo a marzo 2020 (come tutte le altre) e
+fin da allora non è mai più scesa a differenza delle altre***
+
+***Nella parte di drawdown possiamo vedere che ad oggi APPL è
+posizionata al disopra di tutte le altre. Questo significa che ha avuto
+un calo solo a marzo 2020 (come tutte le altre) e fin da allora non è
+mai più scesa a differenza delle altre.***
+
+***se vuoi sapere di più sul drawdown puoi cliccare qui
+--\><https://www.avatrade.it/education/market-terms/what-is-drawdown>***
+
+**Dopo aver fatto una breve analisi, sugli indici azionari scelti,
+abbiamo deciso di continuare ad approfondire la nostra analisi basandoci
+solo l'indice AAPL**
+
+```{r}
+chartSeries(price_apple, theme="black",
+            TA="addVo();addBBands();addCCI()", subset = '2018-01::')
+```
+
+\*\* Questo grafico ci mostra l'andamento dell'indice apple con le bande
+di bollinger, il volume e il CCI (Commodity Channel Index) se vuoi
+ulteriori informazioni sulle bande di bollinger e il CCI puoi visitare
+questi link:
+<https://www.avatrade.it/education/technical-analysis-indicators-strategies/cci-trading-strategies>
+<https://www.ig.com/it/strategie-di-trading/cosa-sono-le-bande-di-bollinger-e-come-usarle-nel-trading-190122>\*\*
+
+```{r}
+highchart(type="stock") %>% 
+  hc_add_series(price_apple) %>% 
+  hc_add_series(SMA(na.omit(Cl(price_apple)),n=50),name="SMA(50)") %>% 
+  hc_add_series(SMA(na.omit(Cl(price_apple)),n=200),name="SMA(200)") %>% 
+  hc_title(text="<b>APPLE Price Candle Stick Chart 2018-2022</b>") %>% 
+  hc_add_theme(hc_theme_darkunica())
+
+
+```
+
+**Tali visualizzazioni possono essere molto utili quando è necessario
+vedere più dettagliatamente i dati. Le Medie mobili singole (SMA) sono
+anche più facili da vedere con un grafico interattivo. rispetto ai
+grafici statici. Questo grafico può essere utilizzato per evidenziare
+importanti analisi tecniche che influenzano il nostro processo
+decisionale. come la "croce d'oro" o la "croce della morte".** ***Se
+vuoi saperne di più su quest'ultima puoi dare un occhiata a questo sito
+\> <https://www.mazzieroresearch.com/golden-cross-che-cose/>***
+
+**"ts_decompose" è una funzione della libreria TS_studio, ci permette di
+vedere quattro grafici interattivi sui prezzi di chiusura**
+
+```{r}
+closing_pr <- Cl(to.monthly(price_apple))
+dc_ts <- ts_decompose(as.ts(closing_pr, start=c(2018)))
+dc_ts
+```
+
+```{r}
+dc <- decompose(as.ts(closing_pr, start=c(2018,1,1)))
+dc$seasonal
+```
+
+**L'output ci mostra quattro grafici dei nostri dati sui prezzi di
+chiusura, che sono:**
+
+**Observeded \<- ci spiega l'andamento dell'indice azionario**
+
+**Trend \<- con il trend possiamo vedere la significativa tendenza al
+rialzo, iniziata intorno alla metà dell'anno 2019.**
+
+\*\*Seasonal \<- fluttuazione stagionale ripetitiva dei dati. Il prezzo
+di chiusura di APPL tende a raggiungere il più alto ad Agosto
+(Generalmente nel mese di settembre vengono presentati nuovi dispositivi
+come iphone e computer, questo potrebbe spiegare l'andamento rialzista)
+e il più basso a Maggio. Guardando questo modello, possiamo dire che nel
+complesso, il momento giusto per vendere questo titolo era nel mese di
+Dicembre, Gennaio ma soprattutto Agosto e il momento giusto per
+acquistare era nel mese di Maggio e Giugno, questo lo possiamo vedere
+meglio eseguendo questa riga di codice ---\> dc\$seasonal.\*\*
+
+\*\*Random \<- fluttuazione irregolare o casuale non catturata dal trend
+e dalla stagionalità, L'attuale situazione della pandemia di Covid-19 è
+un esempio del fatto che potrebbe causare questa fluttuazione
+casuale.\*\*
+
+```{r}
+seas <- ts(price_apple, start=c(2018), end=c(2022, 12), frequency=12)
+
+seas
+ts_seasonal(seas, type = "all") 
+
+```
+
+**ts_seasonal è anche una funzione della libreria "TS_studio", in questo
+caso mettendo type=all , possiamo vedere dal grafico la stagionalità per
+anni e per mesi, ci consente di identificare i modelli stagionali**
+
+**Modelli markoviani** \*\*Il Markov nascosto è modellato da un insieme
+predeterminato di gaussiane. Il problema del rilevamento del dominio è
+un problema di apprendimento non supervisionato, poiché il numero di
+stati non è noto a priori e non esiste una "verità di base" per
+"addestrare" l'HMM.
+
+Questa sezione risolve due problemi di modellazione distinti: il primo
+consiste nell'adattare un HMM con due stati di modalità ai rendimenti
+dell'indice AAPL Il secondo consiste nell'utilizzare tre stati; Abbiamo
+usato la libreria "DepmixS4"\*\*
+
+```{r include=FALSE}
+
+
+
+getSymbols("AAPL", from="2018-01-01")
+appleRest = diff(log(Cl(AAPL))) #calcoliamo il log return... breve guida qui --> https://www.r-bloggers.com/2020/05/basic-statistical-concepts-for-finance/
+returns = as.numeric(appleRest)
+
+
+```
+
+**L'oggetto della serie temporale applerest può essere tracciato,
+mostrando i periodi volatili intorno al 2018 e al 2023**
+
+```{r}
+
+
+plot(appleRest)
+
+```
+
+**Un modello di Markov nascosto a due stati viene montato utilizzando
+l'algoritmo EM "Expectation-maximization"**
+
+**breve guida --\>
+<https://rstudio-pubs-static.s3.amazonaws.com/154174_78c021bc71ab42f8add0b2966938a3b8.html>**
+
+```{r}
+#Adattiamo un modello di Markov nascosto con due stati:
+hmm <- depmix(returns ~ 1, family = gaussian(), nstates = 2, data=data.frame(returns=returns))
+hmmfit <- fit(hmm, verbose = FALSE)
+post_probs <- posterior(hmmfit)
+
+
+```
+
+```{r}
+plot(returns, type='l', main='Regime Detection', xlab='', ylab='Returns')
+matplot(post_probs[,-1], type='l', main='Regime Posterior Probabilities', ylab='Probability')
+legend(x='bottomleft', c('Regime #1','Regime #2'), fill=1:2, bty='n')
+
+
+```
+
+**Traccia il flusso di returns e il regime posteriore probabilità dei
+regimi separati** **In questo caso abbiamo un HMM con 2 stati nascosti,
+questo grafico ci mostra due curve di probabilità, una per ogni stato
+nascosto.** **L'asse x del grafico rappresenta il tempo e l'asse y
+rappresenta la probabilità di trovarci in un particolare stato
+nascosto.** **l'altezza della curva ad ogni passo temporale, indica la
+probabilità di essere in quello stato in quel momento e la larghezza la
+rappresenta la durata dello stato**
+
+**HMM con 3 stati**
+
+```{r include=FALSE}
+hmm1 <- depmix(returns ~ 1, family = gaussian(), nstates = 3, data=data.frame(returns=returns))
+hmmfit1 <- fit(hmm1, verbose = FALSE)
+post_probs1 <- posterior(hmmfit1)
+
+```
+
+```{r}
+plot(returns, type='l', main='Regime Detection', xlab='', ylab='Returns')
+matplot(post_probs1[,-1], type='l', main='Regime Posterior Probabilities', ylab='Probability')
+legend(x='bottomleft', c('Regime #1','Regime #2', 'Regime #3'), fill=1:3, bty='n')
+```
+
+**In questo caso abbiamo 3 curve, come detto precedentemente ognuna
+delle quali rappresenta la probabilità di essere in uno dei 3 stati.**
+
+**Navigando su Medium abbiamo Letto un articolo interessante che tratta
+Hidden Markov Models for Time Series in R studio [Stock Market Data]
+scritto da Ankit Sekseria, abbiamo provato a replicarlo, e adattare il
+suo modello ai nostri dati.** \*\*link\*
+<https://medium.com/analytics-vidhya/hidden-markov-models-for-time-series-in-r-studio-5ae2b9fb0701>
+
+```{r include=FALSE}
+symbolBasket <- c('AAPL')
+getSymbols(symbolBasket , src='yahoo')
+AAPL_subset <- window(AAPL, start = as.Date('2018-01-01'), end = as.Date('2023-01-02'))
+AAPL_train <- cbind(AAPL_subset$AAPL.Close - AAPL_subset$AAPL.Open)
+```
+
+**Estraiamo informazioni relative all'indice AAPL, il set di dati
+contiene informazioni relative al prezzo di apertura al 01-01-2018 e
+chiusura al 02-01-2023 delle azioni, al prezzo alto e basso e al volume
+delle azioni. Siamo interessati a modellare con il nostro HMM la
+differenza tra il valore di chiusura e il valore di apertura del giorno
+corrente.**
+
+```{r}
+mod1 <- depmix(AAPL.Close ~ 1, family = gaussian(), nstates = 5,
+               data = AAPL_train)
+set.seed(1)
+fm2 <- fit(mod1, verbose = FALSE) 
+probs <- posterior(fm2)
+head(probs)
+```
+
+```{r}
+AAPL_predict <- cbind(AAPL_subset$AAPL.Close, probs$state)
+
+head(AAPL_predict)
+
+
+chartSeries(AAPL_predict [,1])
+addTA(AAPL_predict[AAPL_predict [,2]==1,1],on=1, type= "p", col=5,pch=25)
+addTA(AAPL_predict[AAPL_predict [,2]==2,1],on=1, type= "p", col=6,pch=24)
+addTA(AAPL_predict[AAPL_predict [,2]==3,1],on=1, type= "p", col=7,pch=23)
+addTA(AAPL_predict[AAPL_predict [,2]==4,1],on=1, type= "p", col=8,pch=22)
+addTA(AAPL_predict[AAPL_predict [,2]==5,1],on=1, type= "p", col=10,pch=21)
+```
+
+**Arima Forecasting**
+
+\*\* L'idea alla base delle previsioni delle serie temporali è quella di
+utilizzare i dati passati e attuali per prevedere il futuro. Anche se
+non tutti i modelli utilizzati per le previsioni possono essere accurati
+al 100%, i risultati sono comunque generalmente molto utili per prendere
+decisioni sul futuro. Esistono molti modelli e algoritmi per la
+previsione dei dati delle serie temporali.
+
+Come analisti, dobbiamo decidere quale rapporto di separazione ci
+permetterà di presentare i dati di addestramento e di test senza
+uneccessivo costocomputazionale perl'addestramento del modello. Il
+rapporto più comune è 80% train - 20% test, ma dipende dai dati e dallo
+scopo dellaprevisione. \*splitting:
+
+\*train data: dati utilizzati per adattarsi al modello
+
+\*test data: dati utilizzati per valutare il modello
+
+In questo caso vogliamo prevedere i prezzi dei titoli su 100 giorni nel
+set di dati. Utilizzeremo quindi le ultime 100 osservazioni come dati di
+prova e il resto dei dati come dati di addestramento.\*\*\*
+
+```{r}
+# Numero di giorni che vogliamo prevedere
+n <- 100
+
+```
+
+**Effettuiamo lo split del dataset dividendo i dati in train e test:**
+
+```{r}
+# Splitting the data
+train <- head(Cl(price_apple), length(Cl(price_apple))-n)
+test <- tail(Cl(price_apple), n)
+```
+
+**Il metodo ingenuo (Naive Bayes) è un metodo di previsione in cui
+l'ultima osservazione viene utilizzata come risultato previsto dei dati.
+Viene utilizzato come modello di base per le previsioni. Se i risultati
+del nostro modello sono peggiori di quelli del metodo ingenuo, decidiamo
+di non utilizzare questo modello.**
+
+```{r}
+fc_na <- naive(train, h=n)
+
+```
+
+**plot dei risultati:**
+
+```{r}
+autoplot(fc_na) +
+  autolayer(ts(test, start=length(train)), series = "forecast")
+```
+
+**La linea blu è la media della nostra previsione, mentre le aree più
+scure e chiare più scure, che rappresentano rispettivamente gli
+intervalli di confidenza dell'80% e del 95%. Se confrontiamo il
+risultato con i dati di prova effettivi, possiamo vedere che ci sono
+differenze tra loro.**
+
+    ** Arima Model **
+
+\*\*Il modello autoregressivo integrato a media mobile (ARIMA) è una
+combinazione di un modello autoregressivo, un modello di integrazione
+per differenza e un modello a media mobile. Il modello autoregressivo
+(AR) determina la relazione tra un'osservazione e diverse osservazioni
+ritardate; per utilizzare il modello ARIMA i dati delle serie temporali
+devono essere stazionari, il che può essere ottenuto differenziando i
+dati. Infine, il modello di media mobile (MA) definisce la relazione tra
+l'errore residuo del modello di media mobile rispetto alle osservazioni
+ritardate e i valori osservati. I modelli ARIMA sono solitamente
+indicati come ARIMA(p,d,q), dove p, d e q sono parametri stimati
+positivamente; l'ordine AR (p) è il numero di osservazioni ritardate nel
+modello. Per d, d è il numero di volte in cui i dati effettivi vengono
+differenziati fino allo stato stazionario. In genere, non ci sono più di
+due differenziali prima di raggiungere lo stato stazionario; l'ordine MA
+(q) è la dimensione della finestra della media mobile. Esistono modi per
+determinare valori appropriati per questi parametri nel nostro modello,
+ma è difficile. Fortunatamente, R ha una funzione auto.arima() che fa
+questo lavoro per noi. Utilizzando questa funzione, possiamo ottenere
+due tipi di ARIMA: ARIMA non stagionale (che abbiamo appena descritto) e
+ARIMA stagionale. Ovviamente, l'ARIMA non stagionale non include la
+parte stagionale dei dati, mentre l'ARIMA stagionale sì. Vediamo quale
+fornisce i migliori risultati di previsione per i nostri dati.
+
+    **ARIMA non stagionale**
+
+```{r}
+model_non <- auto.arima(train, seasonal=FALSE)
+```
+
+```{r}
+fc_non <- forecast(model_non, h=n)
+```
+
+**plot dei risultati con Arima non stagionale**
+
+```{r}
+autoplot(fc_non)+
+  autolayer(ts(test, start= length(train)), series="forecast")
+
+```
+
+**I risultati ottenuti utilizzando l'ARIMA non stagionale hanno mostrato
+una tendenza al rialzo. Tuttavia, ci sono ancora alcune differenze tra i
+due quando si confrontano con i dati dei test reali.**
+
+    ** Arima stagionale**
+
+```{r}
+model_s <- auto.arima(train)
+```
+
+```{r}
+fc_s <- forecast(model_s, h=n)
+```
+
+```{r}
+autoplot(fc_s)+
+  autolayer(ts(test, start= length(train)), series="forecast")
+
+```
+
+**I risultati mostrano che auto.arima() dà gli stessi risultati
+indipendentemente dal fatto che la parte stagionale dei dati sia inclusa
+o meno. Ciò significa che la parte stagionale dei dati non è
+significativa e che l'ARIMA non stagionale è il miglior modello ARIMA
+basato su auto.arima() per il nostro set di dati.**
+
+     **Forecast Evaluation - valutazione delle previsioni**
+     
+
+**Dopo aver previsto i dati, l'ultima fase consiste nel valutare i
+risultati delle previsioni. La valutazione delle previsioni viene
+effettuata controllando che i residui siano coerenti con le ipotesi sui
+residui e confrontando gli indicatori di accuratezza. Controllo dei
+residui: Il residuo è la differenza tra i dati previsti e quelli
+effettivi. Un buon modello è quello in cui i residui sono distribuiti in
+modo casuale e non c'è un modello evidente. Questa sezione descrive le
+ipotesi residue che devono essere soddisfatte. La distribuzione è
+normale (media = 0) e può essere convalidata da una curva normale. La
+curva normale deve essere a campana. Ha una varianza costante, che può
+essere confermata da un grafico dei residui. La varianza costante è
+indicata da fluttuazioni costanti nei dati. Non c'è autocorrelazione, il
+che può essere confermato dal grafico ACF e dal test di Ljung-Box.
+L'autocorrelazione può essere rilevata sul grafico ACF se c'è una linea
+che supera il limite superiore o inferiore. Nel test di Ljung-Box il
+valore p deve essere maggiore di 0,05 per soddisfare questa ipotesi; se
+i risultati del grafico ACF e del test di Ljung-Box differiscono, si
+raccomanda di utilizzare i risultati del test di Ljung-Box.**
+
+**residual of naive method**
+
+```{r}
+checkresiduals(fc_na)
+```
+
+**residual of arima model**
+
+```{r}
+checkresiduals(fc_non)
+```
+
+**I risultati mostrano che il metodo ingenuo non soddisfa l'ipotesi di
+assenza di autocorrelazione, mentre l'ARIMA soddisfa tutte le ipotesi.
+Pertanto, sulla base del controllo dei residui, il nostro modello ARIMA
+ha fornito risultati migliori rispetto al metodo ingenuo.**
+
+    **Confronto tra gli indicatori di accuratezza**
+
+**Esistono diversi indicatori di accuratezza predittiva. In questa
+analisi verrà confrontato l'errore quadratico medio (RMSE) di entrambi i
+modelli. RMSE (Root Mean Squared Error, errore quadratico medio):
+deviazione standard dei residui che indica la loro distribuzione; un
+valore RMSE minore indica un risultato migliore.**
+
+    **Accuracy Metrics of Naive method**
+
+```{r}
+accuracy(fc_na) 
+```
+
+\*\* MPE
+
+    **Accuracy Metrics of ARIMA**
+
+```{r}
+
+accuracy(fc_non)
+```
+
+**Forecasting con LSTM**
+**Memoria a breve termine a lungo termine**
+**LSTM può elaborare sia singoli dati che una sequenza, come ad esempio un video completo. Questa applicazione è per il riconoscimento vocale e il riconoscimento della scrittura a mano. Aiuta ad evitare problemi legati alla dipendenza a lungo termine. Il loro uso più comune è lo sviluppo del processo di apprendimento di enormi problemi.
+Anche la memoria a lungo e breve termine è una rete neurale ricorrente, ma è diversa dalle altre reti. Altre reti ripetono il modulo ogni volta che l’input riceve nuove informazioni. Tuttavia, LSTM ricorderà il problema per un tempo più lungo e ha una struttura a catena per ripetere il modulo. Esse interagiscono in un metodo speciale e contengono quattro strati di rete neurale.**
+**Se vuoi saperne di più trovi il link qui --> <https://datascience.eu/it/apprendimento-automatico/comprensione-delle-reti-lstm/>**
+
+```{r}
+price_apple_2018 <- getSymbols("AAPL", auto.assign=FALSE, from="2018-01-01", to="2022-12-31")
+APPLE_log_returns <- price_apple_2018 %>% Ad() %>% dailyReturn(type = "log")
+
+```
+
+**Dal momento che stiamo per fare previsione con un modello LSTM Per prevedere il prezzo dei giorni futuri, creiamo nuove variabili da aggiungere al nostro dataset, cosi da avere più informazioni e fare un buon allenamento**
+
+**se vuoi sapere di più sul significato di queste  variabili aggiuntive puoi visitare questo sito-->https://juliahub.com/ui/Packages/Indicators/0sN6c/0.7.0 **
+**oppure visitare il sito tel pacchetto usato "TTR" --> <https://cran.r-project.org/web/packages/TTR/TTR.pdf>**
+
+```{r}
+#Calcoliamo le medie mobili a 10-20-60 giorni
+require(TTR)
+price_apple_2018$Avg_volume_10 <- SMA(price_apple_2018$AAPL.Volume, n = 10)
+price_apple_2018$Avg_volume_20 <- SMA(price_apple_2018$AAPL.Volume, n = 20)
+price_apple_2018$Avg_volume_60 <- SMA(price_apple_2018$AAPL.Volume, n = 60)
+
+# Calcoliamo la % del volume medio dei giorni sopra indicati
+price_apple_2018$Volume_perc_avg_10 <- (price_apple_2018$AAPL.Volume/price_apple_2018$Avg_volume_10) * 100
+price_apple_2018$Volume_perc_avg_20 <- (price_apple_2018$AAPL.Volume/price_apple_2018$Avg_volume_20) * 100
+price_apple_2018$Volume_perc_avg_60 <- (price_apple_2018$AAPL.Volume/price_apple_2018$Avg_volume_60) * 100
+
+# Calcoliamo l'intervallo tra massimo e minimo
+price_apple_2018$Range <- price_apple_2018$AAPL.High - price_apple_2018$AAPL.Low
+
+
+
+#ATTENZIONE ---- se avete problemi con questa funzione potrebbe esere per via del pacchetto dplyr... provate ad usare il pacchetto stats di R ( QUINDI USARE stats::lag INVECE DI log)
+
+price_apple_2018$perc_change_closing <- (price_apple_2018$AAPL.Close - stats::lag(price_apple_2018$AAPL.Close))/stats::lag(price_apple_2018$AAPL.Close) * 100 # 
+
+# Intervallo tra il prezzo di chiusura dei giorni precedenti e il prezzo di chiusura di oggi
+price_apple_2018$change_from_yest <- price_apple_2018$AAPL.Close - stats::lag(price_apple_2018$AAPL.Close) # anche qui stesso problema di conflitto con dplyr (aggiungere stats:: )
+
+# Ora calcoliamo di nuovo le varie medie mobili (MA) per il range 
+# negli ultimi 10, 20 , 60 giorni
+price_apple_2018$moving_avg_10 <- SMA(price_apple_2018$Range, n = 10)
+price_apple_2018$moving_avg_20 <- SMA(price_apple_2018$Range, n = 20)
+price_apple_2018$moving_avg_60 <- SMA(price_apple_2018$Range, n = 60)
+
+# Calcoliamo la % dell'intervallo medio dei giorni sopra indicati
+price_apple_2018$perc_moving_avg_10 <- (price_apple_2018$Range/price_apple_2018$moving_avg_10) * 100
+price_apple_2018$perc_moving_avg_20 <- (price_apple_2018$Range/price_apple_2018$moving_avg_20) * 100
+price_apple_2018$perc_moving_avg_60 <- (price_apple_2018$Range/price_apple_2018$moving_avg_60) * 100
+
+# L'importo totale di denaro scambiato moltiplicato per il volume (in dollari)
+price_apple_2018$cash_tradet <- price_apple_2018$AAPL.Close * price_apple_2018$AAPL.Volume
+
+# Il volume medio di contante scambiato per gli stessi periodi di cui sopra
+price_apple_2018$avg_cash_trated_10 <- SMA(price_apple_2018$cash_tradet, n = 10)
+price_apple_2018$avg_cash_trated_20 <- SMA(price_apple_2018$cash_tradet, n = 20)
+price_apple_2018$avg_cash_trated_60 <- SMA(price_apple_2018$cash_tradet, n = 60)
+
+# La % del volume medio ad oggi.
+price_apple_2018$Avg_Dollar_volume_pct_10 <- (price_apple_2018$cash_tradet/price_apple_2018$avg_cash_trated_10) * 100
+price_apple_2018$Avg_Dollar_volume_pct_20 <- (price_apple_2018$cash_tradet/price_apple_2018$avg_cash_trated_20) * 100
+price_apple_2018$Avg_Dollar_volume_pct_60 <- (price_apple_2018$cash_tradet/price_apple_2018$avg_cash_trated_60) * 100
+
+# apertura - chiusura
+price_apple_2018$nightgap <- price_apple_2018$AAPL.Open - stats::lag(price_apple_2018$AAPL.Close)
+
+# Il Gap % di vincita o perdita rispetto ai prezzi di chiusura di ieri
+price_apple_2018$night_gap_perc <- (price_apple_2018$AAPL.Open - stats::lag(price_apple_2018$AAPL.Close))/ stats::lag(price_apple_2018$AAPL.Close) * 100
+price_apple_2018$perc_range_previous = abs((price_apple_2018$AAPL.Close - price_apple_2018$AAPL.Open)/(price_apple_2018$AAPL.High - price_apple_2018$AAPL.Low) * 100)
+price_apple_2018$perc_range_atpr = (price_apple_2018$Range/price_apple_2018$AAPL.Close) * 100
+price_apple_2018$perc_range_williams = (price_apple_2018$AAPL.High - price_apple_2018$AAPL.Close)/(price_apple_2018$AAPL.High - price_apple_2018$AAPL.Low) * 100
+# Intervallo di calcolo per 1 mese
+
+un_mese_range_perc <- rollapply(price_apple_2018$AAPL.High, 20, max) - rollapply(price_apple_2018$AAPL.Low, 20, max)
+price_apple_2018$un_mese_range_perc = (price_apple_2018$AAPL.Close - price_apple_2018$AAPL.Low)/un_mese_range_perc * 100
+
+#Le medie mobili uniformano i dati sui prezzi per formare un indicatore di trend following.
+
+price_apple_2018$EMA10 <- EMA(price_apple_2018$AAPL.Low, n = 10)
+price_apple_2018$EMA20 <- EMA(price_apple_2018$AAPL.Low, n = 20)
+# Media mobile ponderata
+price_apple_2018$EMA60 <- EMA(price_apple_2018$AAPL.Low, n = 60)
+#La doppia media mobile esponenziale è una misura dell'andamento di un titolo
+# media
+price_apple_2018$WMA10 <- WMA(price_apple_2018$AAPL.Low, n = 10)
+# L'EVWMA utilizza il volume per dichiarare il periodo dell'MA.
+price_apple_2018$EVWMA10 <- EVWMA(price_apple_2018$AAPL.Low, price_apple_2018$AAPL.Volume)
+# Zero Lag Exponential Moving Average (ZLEMA) Come nel caso del doppio
+price_apple_2018$ZLEMA10 <- ZLEMA(price_apple_2018$AAPL.Low, n = 10)
+# Prezzo medio ponderato per il volume (VWAP-"Volume-weighted average price") e media ponderata per il volume mobile
+# prezzo
+price_apple_2018$VWAP10 <- VWAP(price_apple_2018$AAPL.Low, price_apple_2018$AAPL.Volume)
+# La media mobile di Hull (HMA), sviluppata da Alan Hull, è estremamente
+# veloce
+price_apple_2018$HMA10 <- HMA(price_apple_2018$AAPL.Low, n = 20)
+# La media mobile ALMA utilizza la curva della distribuzione Normale (Gauss).
+# quale
+price_apple_2018$ALMA10 <- ALMA(price_apple_2018$AAPL.Low, n = 9, offset = 0.85, sigma = 6)
+
+# salviamo il file in csv 
+write.csv(price_apple_2018, file = "price_apple_2018_Federico_Guzzo.csv", row.names = F)
+
+
+```
+
+**Test di Dickey-Fuller**
+
+```{r}
+
+adf.test(price_apple_2018$AAPL.Adjusted)
+
+```
+
+**Un modo per testare se una serie temporale è stazionaria o meno, è
+eseguire un test Dickey-Fuller, una serie temporale stazionaria è quella
+la cui media, varianza e autocorrelazione sono tutte costanti nel tempo.
+Al contrario, una serie temporale non è stazionaria quando queste tre
+statistiche cambiano nel tempo. Nel nostro caso abbiamo come risultato
+il p-value=0.7585, quindi NON possiamo, rifiutare l'ipotesi nulla perché
+il valore p non è inferiore a 0,05, questo indica che la nostra serie
+temporale non è stazionaria.**
+
+```{r include=FALSE}
+AAPL_lm <- na.omit(price_apple_2018)  #gestiamo i valori mancanti
+set.seed(123)  # impostiamo il set seed per riproducibilità
+X <- AAPL_lm[, -6]
+y <- AAPL_lm[, 6]
+
+# Ridimensioniamo le variabili per eseguire i modelli
+X.scaled <- scale(X)
+
+# Li uniamo di nuovo con i dati scalati
+AAPL_lm <- cbind(X.scaled, y)
+
+# creiamo un indice
+numerical_Vars <- which(sapply(AAPL_lm, is.numeric))
+
+# salviamo il vettore
+numerical_VarNames <- names(numerical_Vars)
+#cat("They exist", length(numerical_Vars), "numerical variables.\n")
+
+sum_numVar <- AAPL_lm[, numerical_Vars]
+gc()  #questa funzione serve per la pulizia della ram
+```
+
+```{r}
+# Rimuoviamo le variabili altamente correlate per evitare l'overfitting dei modelli
+del <- cor(AAPL_lm)
+del[upper.tri(del)] <- 0
+diag(del) <- 0
+AAPL_lm <- AAPL_lm[, !apply(del, 2, function(x) any(x > 0.9))]
+
+
+```
+
+\*\* Creiamo Train e test dal nostro dataset, vogliamo provare a fare
+una previsione temporale di 7 giorni tenendo in considerazione i valori
+predetti da quelli reali\*\*
+
+```{r}
+
+
+giorni_prev = 7
+n = giorni_prev + 1
+X_train = AAPL_lm[1:(nrow(AAPL_lm) - (n - 1)), -17]
+# la nostra variabile dipendete è AAPL.Adjusted
+y_train = AAPL_lm[n:nrow(AAPL_lm), 17]
+X_test = AAPL_lm[((nrow(AAPL_lm) - (n - 2)):nrow(AAPL_lm)), -17]
+
+
+require(quantmod)
+# Creiamo il test di validazione dei prezzi reali dei prossimi 7 giorni 
+AAPL2 = getSymbols("AAPL", from = "2022-12-21", to = "2023-01-01", auto.assign = FALSE)
+nostre_date <- time(AAPL2)
+y_test <- as.numeric(AAPL2$AAPL.Adjusted)
+
+train <- cbind(X_train, y_train)
+# check the number of features
+dim(X_train)
+dim(X_test)
+nostre_date
+#KERAS Deep Learning: Backend TensorFlow Applica una rete di deep learning da strati strettamente accoppiati di uno stack lineare. Se hai già installato Keras e tensorflow, salta il seguente comando devtools::install_github("rstudio/keras") devtools::install_github("rstudio/tensorflow") install_tensorflow() è richiesto
+
+
+```
+
+#KERAS Deep Learning: Backend TensorFlow Applica una rete di deep
+learning da strati strettamente accoppiati di uno stack lineare. Se hai
+già installato Keras e tensorflow, salta il seguente comando
+devtools::install_github("rstudio/keras")
+devtools::install_github("rstudio/tensorflow") install_tensorflow() è
+richiesto
+
+```{r}
+
+gc()
+library(tensorflow)
+library(keras)
+# ##### NOTA BENE (SE HAI UN MAC CON CPU SILICON GLI ULTIMI AGIONAMENTI DI TENSOR E KERAS NON FUNZIONANO)--> Ho dovuto eseguire il downgrade di tensorflow-macos alla versione 2.9.0 e tensorflow-metal alla 0.5.0 per eliminare tali errori. Altri su questo sito hanno segnalato problemi simili con versioni più recenti. Apple deve ancora fornire versioni funzionanti per le nuove versioni di TF.
+# #https://developer.apple.com/forums/thread/722361
+ker = ncol(X_train)
+
+keras_model <- keras::keras_model_sequential()
+keras_model %>% 
+  #We ddd a densely-connected NN layer to an output
+  #ReLU (Rectified Linear Unit) Activation Function
+  layer_dense(units = 60, activation = 'relu', input_shape = ker) %>% 
+  layer_dropout(rate = 0.2) %>% #We apply dropout  to prevent overfitting
+  layer_dense(units = 50, activation = 'relu') %>%
+  layer_dropout(rate = 0.2) %>%
+  layer_dense(units = 1, activation = 'linear')
+
+keras_model %>% compile(optimizer = "rmsprop", loss = "mse", metrics = "mse")
+
+keras_history <- keras_model %>% fit(X_train, y_train, epochs = 100, batch_size = 28, 
+                                     validation_split = 0.1, callbacks = callback_tensorboard("logs/run_a"))
+
+
+
+
+```
+
+**link al video dell'allenamento del nostro modello
+<https://www.youtube.com/watch?v=pmUZUtPUQYc>**
+
+```{r}
+keras_pred <- keras_model %>% predict(X_test, batch_size = 28)
+real_VS_pred <- data.frame(keras_pred, y_test)
+ok <- as.data.frame(nostre_date)
+df <- cbind(ok,real_VS_pred)
+plot(keras_history)
+
+```
+
+```{r}
+
+gc()
+real_VS_pred <- data.frame(keras_pred, y_test)
+
+colnames(real_VS_pred) <- c("KERAS PRED", "REAL PRICES")
+# 
+p4 <- ggplot(real_VS_pred, aes(nostre_date)) + 
+  geom_line(aes(y = keras_pred, colour = "keras_pred")) +
+  geom_line(aes(y = y_test, colour = "real_prices")) +
+  geom_point(aes(y = keras_pred,colour = "keras_pred"),size = 2) + 
+  geom_point(aes(y = y_test, colour = "real_prices"),size = 2) +
+  labs(title = "Keras (Predicted vs Actual)", x = "Date", y = "Daimler Share Price in $") +
+  theme_solarized(light = FALSE)+
+  dark_theme_gray() 
+
+p4
+
+```
+
+```{r}
+
+gc()
+require(kableExtra)
+kable(df) %>% kable_material_dark(bootstrap_options = "bordered", full_width = F, 
+                                      position = "center") %>% column_spec(1, bold = T, color = "red")
+
+
+
+```
+
+    ***CONCLUSIONI***
+
+I dati delle serie temporali sono ovunque e la maggior parte di essi
+può influenzare la nostra decisione. La
+scomposizione dei dati delle serie temporali può darci una visione più
+dettagliata del modello dei nostri dati. Analizzarlo ci aiuterà a
+prendere decisioni sui nostri dati. Tuttavia, la decomposizione in R può
+essere fatta solo all'oggetto ts dove la frequenza verrà specificata.
+Dopo aver analizzato le nostre time-series, di solito vogliamo
+prevederli per aiutarci a prendere decisioni sul futuro.
+Tuttavia, bisogna tener sempre presente che il risultato delle previsioni
+non può mai essere accurato al 100%.
+La previsione può essere fatta usando
+molti modelli e algoritmi. In questa analisi, abbiamo usato il metodo
+NAIVE, il modello ARIMA, HMM, LSTM.
+Nella nostra analisi Il modello migliore risulta esser LSTM, in quanto è quello che si avvicina di più ai dati reali, sfortunatamente, il nostro modello non è ancora sufficiente per prevedere con successo le serie temporali del mercato.
